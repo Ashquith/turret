@@ -9,17 +9,21 @@ import random
 SCREEN_WIDTH = 1600
 SCREEN_HEIGHT = 1200
 
-GRID_SIZE = 100 # in pixels
+GRID_SIZE = 200 # in pixels
+MOUSEOVER_DELAY = 0.6 # in seconds
 
 SHIP_RADIUS = 20 # in pixels, which also = meters
-ACCELERATION = 100 # in pixels per second2
-ROTATION_SPEED = 45 # turn capability in degrees per second
+ACCELERATION = 50 # in pixels per second2
+ROTATION_SPEED = 90 # turn capability in degrees per second
+BOOST_MODIFIER = 4
+AUTOPILOT = True
 
 PROJECTILE_RADIUS = 20
 PROJECTILE_SPEED = 1 # fraction between 0-1 where 1 is lightspeed
-SHOT_DELAY = 0.5 # seconds between shots
-VOLLEY_SIZE = 4 # shots in volley
-MAX_SCATTER_DISTANCE = 25 # max projectile deviation in pixels(metres) per light second of delay
+PROJECTILE_DAMAGE = 5 # how much hp is lost on hit
+SHOT_DELAY = 0.1 # seconds between shots
+VOLLEY_SIZE = 1 # shots in volley
+MAX_SCATTER_DISTANCE = 40 # max projectile deviation in pixels(metres) per light second of delay
 
 TIME_DELAY = 1 # distance between ship and turret in light-seconds
 TICKS_IN_A_SEC = 60
@@ -32,36 +36,92 @@ class Ship(pygame.sprite.Sprite):
     def __init__(self, x, y):
         super().__init__()
         self.position = pygame.Vector2(x, y)
-        self.velocity = pygame.Vector2(100, 0)
-        self.acceleration_vector = pygame.Vector2(ACCELERATION, 0)
+        self.velocity = pygame.Vector2(0, -100)
+        self.acceleration_vector = pygame.Vector2(0, -ACCELERATION)
+        self.boost = 1
+        self.hp = 100
+        self.boost_fuel = 3000
+        self.boost_til = 0
         self.turn_direction = 0
+        self.rotation = 0
         self.radius = SHIP_RADIUS
+        self.original_image = pygame.image.load("spaceship.png").convert_alpha()
+        self.original_image = pygame.transform.scale(self.original_image, (80, 80))
+        self.original_image2 = pygame.image.load("spaceship2.png").convert_alpha()
+        self.original_image2 = pygame.transform.scale(self.original_image2, (80, 80))
+        self.image = self.original_image
+        self.image2 = self.original_image2
+        self.rect = self.image.get_rect(center=self.position)
         self.next_course_change = 0
         self.pos_history = []
         self.velocity_history = []
         self.acceleration_history = []
         self.hit_history = []
     
-    def should_i_turn(self, tick):
-        if tick == self.next_course_change:
-            self.next_course_change += TIME_DELAY_IN_TICKS
-            return True
-        return False
+    def piloting(self, tick):
+        
+        if AUTOPILOT:
+
+            if tick == self.next_course_change:
+                self.next_course_change += TIME_DELAY_IN_TICKS
+                self.turn_direction = random.choice([-1, 1])
+
+            if self.boost_til > tick:
+                self.activate_boost()
+            elif self.boost_fuel >= TIME_DELAY_IN_TICKS * 40:
+                self.boost_til = random.uniform(10,120) + tick
+            
+                
+
+        else:
+            keys = pygame.key.get_pressed()        
+            
+            self.turn_direction = 0 
+
+            if keys[pygame.K_d]:
+                self.turn_direction = 1
+            
+            if keys[pygame.K_a]:
+                self.turn_direction = -1
+            
+            if keys[pygame.K_SPACE]:
+                self.activate_boost()
+
+    def activate_boost (self):
+        if self.boost_fuel >= 10:
+            self.boost = BOOST_MODIFIER
+            self.boost_fuel -= 10
     
     def log(self):
         self.pos_history.append(self.position.copy())
         self.velocity_history.append(self.velocity.copy())
         self.acceleration_history.append(self.acceleration_vector.copy())         
 
-    def change_course(self):
-        self.turn_direction = random.choice([-1, 1]) 
+      
             
     def move(self):
+
+        if self.boost == 1:
+            self.boost_fuel +=5
+            self.boost_fuel = min(self.boost_fuel, 3000)
+
         dt = 1 / TICKS_IN_A_SEC
         rotation_amount = ROTATION_SPEED * self.turn_direction * dt
         self.acceleration_vector = self.acceleration_vector.rotate(rotation_amount)
-        self.velocity += self.acceleration_vector * dt
+        self.velocity += self.acceleration_vector * dt * self.boost
         self.position += self.velocity * dt
+
+        right_vector = pygame.Vector2(0, -1)
+        self.rotation = right_vector.angle_to(self.acceleration_vector)
+        if self.boost == 1:
+            self.image = pygame.transform.rotate(self.original_image, -self.rotation)
+            self.rect = self.image.get_rect(center=self.position)
+        else:
+            self.image = pygame.transform.rotate(self.original_image2, -self.rotation)
+            self.rect = self.image.get_rect(center=self.position)
+        
+        self.boost = 1
+        
 
     def collision_check(self, live_projectiles, tick):
         for proj in live_projectiles[:]:
@@ -76,12 +136,13 @@ class Ship(pygame.sprite.Sprite):
                         "offset": self.position.distance_to(proj.position)
                     }                    
                     self.hit_history.append(hit_record)
+                    self.hp -= PROJECTILE_DAMAGE
                 else:
                     proj.status = "miss"
                     live_projectiles.remove(proj)
 
-        
-
+    def is_inside (self, mousepos):
+        return self.position.distance_to(mousepos) <= self.radius
         
 
 
@@ -130,11 +191,32 @@ class Projectile(pygame.sprite.Sprite):
         self.radius = PROJECTILE_RADIUS
         self.arrival = arrival
         self.status = "live" # turns into hit or miss at arrival time
+        self.explosion_radius = 0
+        self.explosion_width = 0
 
+    def explosion(self, time):
+
+        self.explosion_radius = round(time * 2)
+        self.explosion_width = max (1, round(12 - time/4))
+   
 
 
 # ----------------------------------------------------------
 
+def wait_for_key():
+    clock = pygame.time.Clock()
+    waiting = True
+    while waiting:
+        clock.tick(TICKS_IN_A_SEC)
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_SPACE:
+                    main()
+                waiting = False
+                if game_state == "ending":
+                    game_state = "game_over"
 
 
 def main():
@@ -143,39 +225,47 @@ def main():
     pygame.display.set_caption("Turret vs Ship")
     clock = pygame.time.Clock()
     hud_font = pygame.font.Font(None, 24)
+    end_font = pygame.font.Font(None, 64)
 
     ship = Ship(SCREEN_WIDTH /2, SCREEN_HEIGHT /2)
     turret = Turret()
     projectiles = []
     live_projectiles = []
     tick = 0
+    game_over_time = 0
 
+    started_hovering = False
 
-    running = True
-    while running:
+    game_state = "playing"
+    while game_state == "playing" or game_state == "ending":  
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                running = False
+                game_state = "game_over"
         screen.fill((0, 0, 0))
 
 
         # UPDATE
-        
-        ship.log()
-        if ship.should_i_turn(tick):
-            ship.change_course()
-        
-        
-        if turret.should_i_shoot(tick):
-            for i in range(0, VOLLEY_SIZE): 
-                projectile_data = turret.aim(tick, ship.pos_history[-TIME_DELAY_IN_TICKS], ship.velocity_history[-TIME_DELAY_IN_TICKS], ship.acceleration_history[-TIME_DELAY_IN_TICKS])
-                new_projectile = turret.shoot(*projectile_data)
-                projectiles.append(new_projectile)
-                live_projectiles.append(new_projectile)
-            turret.next_shot_tick = tick + SHOT_DELAY_IN_TICKS 
 
-        ship.move()    
-        ship.collision_check(live_projectiles, tick)    
+          
+
+        if game_state == "playing":
+            ship.log()
+            ship.piloting(tick)            
+            
+            if turret.should_i_shoot(tick):
+                for i in range(0, VOLLEY_SIZE): 
+                    projectile_data = turret.aim(tick, ship.pos_history[-TIME_DELAY_IN_TICKS], ship.velocity_history[-TIME_DELAY_IN_TICKS], ship.acceleration_history[-TIME_DELAY_IN_TICKS])
+                    new_projectile = turret.shoot(*projectile_data)
+                    projectiles.append(new_projectile)
+                    live_projectiles.append(new_projectile)
+                turret.next_shot_tick = tick + SHOT_DELAY_IN_TICKS 
+
+            ship.move()    
+            ship.collision_check(live_projectiles, tick) 
+
+            if ship.hp <= 0:
+                game_state = "ending"
+                game_over_time = tick   
         
         
         # DRAWING
@@ -183,6 +273,7 @@ def main():
         screen_center = pygame.Vector2(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)
         camera_offset = ship.position - screen_center
 
+        # GRID
 
         start_x = camera_offset.x - (camera_offset.x % GRID_SIZE)
 
@@ -200,10 +291,31 @@ def main():
             line_end = pygame.Vector2(camera_offset.x + SCREEN_WIDTH, y)
             pygame.draw.line(screen, (50, 50, 50), line_start-camera_offset, line_end-camera_offset, width=1)
 
+        # SHIP
+        
         ship_screen_pos = ship.position - camera_offset
-        pygame.draw.circle(screen, (255, 255, 255), ship_screen_pos, ship.radius)
+        ship.rect.center = ship_screen_pos
+        
+        if game_state == "playing":
+            screen.blit(ship.image, ship.rect)
+        if game_state == "ending":
+            from_hit_time = tick - game_over_time
 
-        pygame.draw.line(screen, (255, 255, 255), ship_screen_pos, ship_screen_pos + ship.acceleration_vector, width=5)
+            explosion_radius = round(from_hit_time * 3)
+            explosion_width = max (1, round(24 - from_hit_time/6))
+                        
+            red_level = max(0, 255 - from_hit_time * 2.0)
+            secondary = max(0, round(explosion_radius * 0.9)-20)
+            pygame.draw.circle(screen, (red_level, 0, 0), ship_screen_pos + (10,10), explosion_radius, width = explosion_width)
+            pygame.draw.circle(screen, (red_level, 0, 0), ship_screen_pos + (-10,-10), explosion_radius, width = explosion_width)
+            pygame.draw.circle(screen, (red_level, 0, 0), ship_screen_pos + (5,0), explosion_radius, width = explosion_width)
+            pygame.draw.circle(screen, (max(0, red_level-50), 0, 0), ship_screen_pos + (5,0), secondary, width = max(1, explosion_width-2))
+            pygame.draw.circle(screen, (max(0, red_level-50), 0, 0), ship_screen_pos + (5,5), secondary, width = max(1, explosion_width-2))
+            pygame.draw.circle(screen, (max(0, red_level-50), 0, 0), ship_screen_pos + (-5,0), secondary, width = max(1, explosion_width-2))
+            pygame.draw.circle(screen, (max(0, red_level-50), 0, 0), ship_screen_pos + (-5,5), secondary, width = max(1, explosion_width-2))
+            pygame.draw.circle(screen, (max(0, red_level-50), 0, 0), ship_screen_pos, secondary, width = max(1, explosion_width-2))
+
+         # PROJECTILES
 
         for proj in projectiles:
             proj_screen_pos = proj.position - camera_offset
@@ -211,19 +323,26 @@ def main():
                 contraction = round(((proj.arrival - tick)/TIME_DELAY_IN_TICKS) * PROJECTILE_RADIUS)
                 pygame.draw.circle(screen, (0, 255, 0), proj_screen_pos, max(1, contraction), width = 2)
             elif proj.status == "hit":
-                pygame.draw.circle(screen, (255, 0, 0), proj_screen_pos, 5, width = 0)
+                from_hit_time = tick - proj.arrival
+                if from_hit_time < TICKS_IN_A_SEC * 2:
+                    proj.explosion(from_hit_time)
+                    red_level = max(0, 255 - from_hit_time * 2.5)
+                    secondary = max(0, round(proj.explosion_radius * 0.9)-20)
+                    pygame.draw.circle(screen, (red_level, 0, 0), proj_screen_pos, proj.explosion_radius, width = proj.explosion_width)
+                    pygame.draw.circle(screen, (max(0, red_level-50), 0, 0), proj_screen_pos, secondary, width = max(1, proj.explosion_width-2))
+                pygame.draw.circle(screen, (255, 0, 0), proj_screen_pos, 3, width = 0)
             elif proj.status == "miss":
-                pygame.draw.circle(screen, (0, 0, 255), proj_screen_pos, 5, width = 0)
+                pygame.draw.circle(screen, (0, 0, 255), proj_screen_pos, 3, width = 0)
 
         # HUD
         
         time_passed = tick/TICKS_IN_A_SEC
+        if game_state == "ending":
+            time_passed = game_over_time/TICKS_IN_A_SEC
         time_text_surface = hud_font.render(f"Simulation time: {time_passed:.0f} s", True, (255, 255, 255))
         screen.blit(time_text_surface, (20, 20))
 
-        speed = ship.velocity.length()
-        speed_text_surface = hud_font.render(f"Speed: {speed:.0f} p/s", True, (255, 255, 255))
-        screen.blit(speed_text_surface, (20, 50))
+
 
         shots = len(projectiles)
         shots_text_surface = hud_font.render(f"Shots made: {shots:.0f}", True, (255, 255, 255))
@@ -237,11 +356,66 @@ def main():
         shots_hit_text_surface = hud_font.render(f"Shots hit: {shots_hit:.0f} ({shot_percent:.1f}%)", True, (255, 255, 255))
         screen.blit(shots_hit_text_surface, (20, 110))
 
+        # BARS
+
+        bar_pos = ship.position - camera_offset + (-50, 60)
+
+        bar_rect = pygame.Rect(bar_pos.x, bar_pos.y, max(0, ship.hp), 10)
+        bar_border = pygame.Rect(bar_pos.x, bar_pos.y, 100, 10)
+        pygame.draw.rect(screen, (155,0,0), bar_rect, width = 0)
+        pygame.draw.rect(screen, (255,0,0), bar_border, width=1)
+
+        boost_bar_rect = pygame.Rect(bar_pos.x, bar_pos.y+15, round(ship.boost_fuel/30), 10)
+        boost_bar_border = pygame.Rect(bar_pos.x, bar_pos.y+15, 100, 10)
+        pygame.draw.rect(screen, (0,130,255), boost_bar_rect, width = 0)
+        pygame.draw.rect(screen, (100,130,255), boost_bar_border, width=1)
+
+        # MOUSEOVER
+
+        mouse_pos = pygame.mouse.get_pos() + camera_offset
+        is_hovering = ship.is_inside(mouse_pos)
+
+        
+        tooltip_pos = ship.position - camera_offset + (60,-30)
+
+
+        if is_hovering and not started_hovering:
+            hover_start = tick
+            started_hovering = True
+        elif is_hovering and started_hovering:
+            if tick - hover_start >= MOUSEOVER_DELAY * TICKS_IN_A_SEC:
+                speed = ship.velocity.length()
+                speed_text_surface = hud_font.render(f"Speed: {speed:.0f} p/s", True, (255, 255, 255))
+                acceleration_text_surface = hud_font.render(f"Acceleration: {ACCELERATION * ship.boost:.0f} p/s2", True, (255, 255, 255))
+
+                tooltip_rect = pygame.Rect(tooltip_pos.x, tooltip_pos.y, 200, 50)
+                overlay = pygame.Surface(tooltip_rect.size, pygame.SRCALPHA)
+                overlay.fill((50, 50, 50, 80))
+                screen.blit(overlay, tooltip_rect.topleft)
+                screen.blit(speed_text_surface, (tooltip_pos)+(10,10))
+                screen.blit(acceleration_text_surface, (tooltip_pos)+(10,30))
+        elif not is_hovering:
+            started_hovering = False
+            hover_start = 0
+
+        # retry screen
+
+        if game_state == "ending" and tick > game_over_time + 100:
+            game_over_text = end_font.render("GAME OVER", True, (255, 0, 0))
+            text_rect = game_over_text.get_rect(center=(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2))
+            screen.blit(game_over_text, text_rect)
+            retry_text = hud_font.render("Press space to retry", True, (255, 0, 0))
+            text_rect = retry_text.get_rect(center=(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 30))
+            screen.blit(retry_text, text_rect)
+        if game_state == "ending" and tick > game_over_time + 300:
+            wait_for_key()
+
+
         pygame.display.update()
         clock.tick(TICKS_IN_A_SEC)
         tick += 1
 
-
+    pygame.quit()
 
 
 if __name__ == "__main__":
