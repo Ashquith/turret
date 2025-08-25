@@ -16,20 +16,18 @@ SHIP_RADIUS = 20 # in pixels, which also = meters
 ACCELERATION = 50 # in pixels per second2
 ROTATION_SPEED = 90 # turn capability in degrees per second
 BOOST_MODIFIER = 4
-AUTOPILOT = True
 
 PROJECTILE_RADIUS = 20
 PROJECTILE_SPEED = 1 # fraction between 0-1 where 1 is lightspeed
 PROJECTILE_DAMAGE = 5 # how much hp is lost on hit
 SHOT_DELAY = 0.1 # seconds between shots
 VOLLEY_SIZE = 1 # shots in volley
-MAX_SCATTER_DISTANCE = 40 # max projectile deviation in pixels(metres) per light second of delay
+MAX_SCATTER_DISTANCE = 20 # max projectile deviation in pixels(metres) per light second of delay
 
 TIME_DELAY = 1 # distance between ship and turret in light-seconds
 TICKS_IN_A_SEC = 60
 TIME_DELAY_IN_TICKS = TICKS_IN_A_SEC * TIME_DELAY
 SHOT_DELAY_IN_TICKS = TICKS_IN_A_SEC * SHOT_DELAY
-
 
 
 class Ship(pygame.sprite.Sprite):
@@ -58,32 +56,25 @@ class Ship(pygame.sprite.Sprite):
         self.acceleration_history = []
         self.hit_history = []
     
-    def piloting(self, tick):
-        
-        if AUTOPILOT:
+    def piloting(self, tick, autopilot):
+        self.boost = 1
 
-            if tick == self.next_course_change:
+        if autopilot:
+            if tick >= self.next_course_change:
                 self.next_course_change += TIME_DELAY_IN_TICKS
                 self.turn_direction = random.choice([-1, 1])
-
             if self.boost_til > tick:
                 self.activate_boost()
-            elif self.boost_fuel >= TIME_DELAY_IN_TICKS * 40:
-                self.boost_til = random.uniform(10,120) + tick
-            
-                
+            elif self.boost_fuel >= TIME_DELAY_IN_TICKS * 30:
+                self.boost_til = random.uniform(10,90) + tick
 
         else:
-            keys = pygame.key.get_pressed()        
-            
-            self.turn_direction = 0 
-
+            self.turn_direction = 0
+            keys = pygame.key.get_pressed()
             if keys[pygame.K_d]:
-                self.turn_direction = 1
-            
+                self.turn_direction = 1            
             if keys[pygame.K_a]:
-                self.turn_direction = -1
-            
+                self.turn_direction = -1            
             if keys[pygame.K_SPACE]:
                 self.activate_boost()
 
@@ -95,12 +86,9 @@ class Ship(pygame.sprite.Sprite):
     def log(self):
         self.pos_history.append(self.position.copy())
         self.velocity_history.append(self.velocity.copy())
-        self.acceleration_history.append(self.acceleration_vector.copy())         
-
-      
+        self.acceleration_history.append(self.acceleration_vector.copy())       
             
     def move(self):
-
         if self.boost == 1:
             self.boost_fuel +=5
             self.boost_fuel = min(self.boost_fuel, 3000)
@@ -118,9 +106,7 @@ class Ship(pygame.sprite.Sprite):
             self.rect = self.image.get_rect(center=self.position)
         else:
             self.image = pygame.transform.rotate(self.original_image2, -self.rotation)
-            self.rect = self.image.get_rect(center=self.position)
-        
-        self.boost = 1
+            self.rect = self.image.get_rect(center=self.position)              
         
 
     def collision_check(self, live_projectiles, tick):
@@ -203,20 +189,18 @@ class Projectile(pygame.sprite.Sprite):
 
 # ----------------------------------------------------------
 
-def wait_for_key():
-    clock = pygame.time.Clock()
+def wait_for_key(clock):    
     waiting = True
     while waiting:
         clock.tick(TICKS_IN_A_SEC)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
+                return "quit"
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
-                    main()
-                waiting = False
-                if game_state == "ending":
-                    game_state = "game_over"
+                    return "space"
+                else:
+                    return "quit"
 
 
 def main():
@@ -226,6 +210,7 @@ def main():
     clock = pygame.time.Clock()
     hud_font = pygame.font.Font(None, 24)
     end_font = pygame.font.Font(None, 64)
+    autopilot = False
 
     ship = Ship(SCREEN_WIDTH /2, SCREEN_HEIGHT /2)
     turret = Turret()
@@ -233,24 +218,35 @@ def main():
     live_projectiles = []
     tick = 0
     game_over_time = 0
+    
 
     started_hovering = False
 
-    game_state = "playing"
+    game_state = "starting"
+    while game_state == "starting":
+        screen.fill((0, 0, 0))
+        game_text = end_font.render("Press spacebar for autopilot, any other key for manual", True, (255, 0, 0))
+        text_rect = game_text.get_rect(center=(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2))
+        screen.blit(game_text, text_rect)
+        pygame.display.update()
+
+        key = wait_for_key(clock)        
+        if key == "space":
+            autopilot = True
+        game_state = "playing"
+    
+
+
     while game_state == "playing" or game_state == "ending":  
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 game_state = "game_over"
         screen.fill((0, 0, 0))
-
-
-        # UPDATE
-
           
 
         if game_state == "playing":
             ship.log()
-            ship.piloting(tick)            
+            ship.piloting(tick, autopilot)            
             
             if turret.should_i_shoot(tick):
                 for i in range(0, VOLLEY_SIZE): 
@@ -387,28 +383,45 @@ def main():
                 speed = ship.velocity.length()
                 speed_text_surface = hud_font.render(f"Speed: {speed:.0f} p/s", True, (255, 255, 255))
                 acceleration_text_surface = hud_font.render(f"Acceleration: {ACCELERATION * ship.boost:.0f} p/s2", True, (255, 255, 255))
+                hp_text_surface = hud_font.render(f"HP: {ship.hp:.0f} / 100", True, (255, 255, 255))
+                boost_text_surface = hud_font.render(f"Boost fuel: {ship.boost_fuel:.0f} / 3000", True, (255, 255, 255))
 
-                tooltip_rect = pygame.Rect(tooltip_pos.x, tooltip_pos.y, 200, 50)
+                tooltip_rect = pygame.Rect(tooltip_pos.x, tooltip_pos.y, 200, 100)
                 overlay = pygame.Surface(tooltip_rect.size, pygame.SRCALPHA)
                 overlay.fill((50, 50, 50, 80))
                 screen.blit(overlay, tooltip_rect.topleft)
                 screen.blit(speed_text_surface, (tooltip_pos)+(10,10))
                 screen.blit(acceleration_text_surface, (tooltip_pos)+(10,30))
+                screen.blit(hp_text_surface, (tooltip_pos)+(10,50))
+                screen.blit(boost_text_surface, (tooltip_pos)+(10,70))
         elif not is_hovering:
             started_hovering = False
             hover_start = 0
 
         # retry screen
 
-        if game_state == "ending" and tick > game_over_time + 100:
+        if game_state == "ending" and tick > game_over_time + 120:
             game_over_text = end_font.render("GAME OVER", True, (255, 0, 0))
             text_rect = game_over_text.get_rect(center=(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2))
             screen.blit(game_over_text, text_rect)
             retry_text = hud_font.render("Press space to retry", True, (255, 0, 0))
             text_rect = retry_text.get_rect(center=(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 30))
             screen.blit(retry_text, text_rect)
-        if game_state == "ending" and tick > game_over_time + 300:
-            wait_for_key()
+        if game_state == "ending" and tick > game_over_time + 125:
+            
+            quit_or_restart = wait_for_key(clock)
+            if quit_or_restart == "quit":
+                pygame.quit()
+                return
+            if quit_or_restart == "space":
+                ship = Ship(SCREEN_WIDTH /2, SCREEN_HEIGHT /2)
+                turret = Turret()
+                projectiles = []
+                live_projectiles = []
+                tick = 0
+                game_over_time = 0
+                started_hovering = False
+                game_state = "playing"
 
 
         pygame.display.update()
